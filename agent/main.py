@@ -1,4 +1,4 @@
-"""CLI entry point for the local coding agent."""
+"""ローカルコーディングエージェントの CLI エントリポイント。"""
 from __future__ import annotations
 
 import argparse
@@ -26,7 +26,18 @@ def main(argv: list[str] | None = None) -> int:
     config = AppConfig.from_env(workspace=args.workspace)
     config = _apply_cli_overrides(config, args)
     result = AgentLoop(config).run(args.task)
-    print(json.dumps({"stop_reason": result.stop_reason, "log_file": result.log_file, "last_observation": result.observations[-1] if result.observations else None}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {
+                "stop_reason": result.stop_reason,
+                "log_file": result.log_file,
+                "last_observation": result.observations[-1]["observation"] if result.observations else None,
+                "last_history_entry": result.shared_history[-1] if result.shared_history else None,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0 if result.stop_reason == "finish" else 1
 
 
