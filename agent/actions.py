@@ -1,4 +1,4 @@
-"""Action executor for validated LLM actions."""
+"""検証済み action を実行するモジュール。"""
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -32,12 +32,14 @@ class ActionExecutor:
         self.finished = False
 
     def execute(self, action: AgentAction) -> dict[str, Any]:
+        """実行エージェントが選んだ action を実行して observation を返す。"""
+
         handler = getattr(self, f"_{action.action}")
         self.logger.log("action", action=action.action, args=action.args, thought_summary=action.thought_summary)
         try:
             result = handler(**action.args)
             observation = {"ok": True, "action": action.action, "result": result}
-        except Exception as exc:  # observations intentionally carry policy/git/search errors back to LLM
+        except Exception as exc:
             observation = {"ok": False, "action": action.action, "error": f"{type(exc).__name__}: {exc}"}
         self.logger.log("observation", **observation)
         return observation
@@ -84,16 +86,29 @@ class ActionExecutor:
         return {**asdict(result), "changed_files": before != after, "git_status": after}
 
     def _search_web(self, query: str) -> dict[str, Any]:
-        results = self.search_client.search(query, limit=5)
+        """検索結果と、取得できたページ本文の抜粋を返す。"""
+
+        results = self.search_client.search(query, limit=5, fetch_pages=True)
         shaped = [asdict(item) for item in results]
         self.logger.log("search", query=query, results=shaped)
-        return {"query": query, "results": shaped}
+        return {
+            "query": query,
+            "results": shaped,
+            "note": "result.page_content には実ページ本文から抽出した抜粋が入ります。必要なら fetch_url で個別URLを追加確認してください。",
+        }
+
+    def _fetch_url(self, url: str) -> dict[str, Any]:
+        """指定 URL の本文抜粋を返す。"""
+
+        content = self.search_client.fetch_url(url)
+        self.logger.log("fetch_url", url=url, chars=len(content))
+        return {"url": url, "content": content, "chars": len(content)}
 
     def _git_diff(self) -> dict[str, str]:
         return {"status": self.git.status_short(), "diff": self.git.diff()}
 
     def _commit_changes(self, message: str) -> dict[str, Any]:
-        # commit enforces prior diff. To keep the LLM-facing action ergonomic, we check diff here.
+        # commit 前の diff 確認をこの action 内でも必ず行う。
         diff = self.git.diff()
         info = self.git.commit(message)
         if info is None:
@@ -114,6 +129,6 @@ class ActionExecutor:
         }
 
     def _ask_user(self, question: str) -> dict[str, str]:
-        # In CLI mode, questions are surfaced as a stopping observation to avoid hidden blocking.
+        # CLI mode では隠れたブロッキングを避けるため、質問を observation に出して停止扱いにする。
         self.finished = True
-        return {"question": question, "note": "Human confirmation required."}
+        return {"question": question, "note": "人間の確認が必要です。"}
